@@ -206,8 +206,12 @@ export async function editSongFlow(
           };
         });
         if (!updatedSong) return void (await ctx.reply("Песня не найдена."));
+        const cardKeyboard = new InlineKeyboard()
+          .text("✏️ Редактировать", `song:edit:${song.id}`)
+          .text("🗑 Удалить", `song:delete:${song.id}`).row()
+          .text("⬅️ К песням", `team:songs:${team.id}`);
         await ctx.reply("✅ Песня обновлена!");
-        await sendSongCard(ctx, updatedSong);
+        await sendSongCard(ctx, updatedSong, undefined, cardKeyboard);
         return;
       }
     }

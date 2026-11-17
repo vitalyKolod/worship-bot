@@ -2,3 +2,9 @@ node_modules/
 dist/
 .env
 *.log
+.audio-venv/
+data/songs/
+*.mp3
+*.wav
+*.m4a
+models/

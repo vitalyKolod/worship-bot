@@ -37,7 +37,9 @@ export async function addSongFlow(
   conversation: MyConversation,
   ctx: MyContext,
   initialTeamId?: string,
-  originMessageId?: number
+  originMessageId?: number,
+  initialTitle?: string,
+  serviceId?: string
 ) {
   const teams = await conversation.external(async () =>
     (await getAdminTeams(ctx.from!.id)).map((team) => ({
@@ -80,7 +82,7 @@ export async function addSongFlow(
   const selectedTeamId = selectedTeam.id
   const selectedTeamName = selectedTeam.name
 
-  const titleResult = await askSongTitle(conversation, ctx)
+  const titleResult = initialTitle ? { back: false as const, value: initialTitle } : await askSongTitle(conversation, ctx)
   if (titleResult.back) return
   await deleteMessage(ctx, originMessageId)
   const title = titleResult.value
@@ -113,6 +115,7 @@ export async function addSongFlow(
     })
     const plain = created.toObject()
     return {
+      id: created._id.toString(),
       title: plain.title,
       artist: plain.artist,
       genre: plain.genre,
@@ -125,7 +128,12 @@ export async function addSongFlow(
   })
 
   await ctx.reply(`✅ Песня добавлена в команду «${selectedTeamName}»!`)
-  await sendSongCard(ctx, song)
+  const keyboard = new InlineKeyboard()
+  if (serviceId) keyboard.text("➕ Добавить в служение", `sl:a:${serviceId}:${song.id}`).row()
+  keyboard.text("✏️ Редактировать", `song:edit:${song.id}`)
+  if (serviceId) keyboard.text("⬅️ К поиску", `sl:search:${serviceId}`)
+  else keyboard.text("⬅️ К песням", `team:songs:${selectedTeamId}`)
+  await sendSongCard(ctx, song, undefined, keyboard)
 }
 
 async function askSongTitle(

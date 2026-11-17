@@ -20,11 +20,13 @@ const userSchema = new Schema({
   },
   inputMode: {
     type: String,
-    enum: ["none", "registration_fio", "registration_group", "registration_custom_role", "create_team", "join_custom_role"],
+    enum: ["none", "registration_fio", "registration_group", "registration_custom_role", "create_team", "join_custom_role", "profile_fio", "profile_group", "search_song"],
     default: "none",
   },
   pendingTeamJoinCode: { type: String, default: null },
   pendingJoinRoles: { type: [String], default: [] },
+  awaitingAudioSongId: { type: Schema.Types.ObjectId, ref: "Song" },
+  pendingSongSearchTeamId: { type: Schema.Types.ObjectId, ref: "Team" },
   createdAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 

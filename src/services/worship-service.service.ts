@@ -110,7 +110,7 @@ export async function getLineupNames(serviceId: Types.ObjectId | string) {
 export async function addSetlistSong(teamId: Types.ObjectId | string, serviceId: Types.ObjectId | string, songId: Types.ObjectId | string) {
   const [service, song] = await Promise.all([
     WorshipService.findOne({ _id: serviceId, team: teamId, status: "scheduled" }),
-    Song.findOne({ _id: songId, team: teamId }),
+    Song.findOne({ _id: songId, team: teamId, archivedAt: { $exists: false } }),
   ]);
   if (!service || !song) return null;
   if (service.setlist.some((item) => String(item.song) === String(songId))) return service;

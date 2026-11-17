@@ -4,6 +4,8 @@ import { findSongsInTeam, listSongsInTeam } from "../../../services/songService"
 import { Song, SongDoc } from "../../../models/Song";
 import { formatSongCard, sendSongCard } from "../../views/songCard";
 import { getTeamsForUser } from "../../../services/teamService";
+import { isAdmin } from "../../../services/teamService";
+import { env } from "../../../config/env";
 
 export const songQueryComposer = new Composer<MyContext>();
 
@@ -146,6 +148,21 @@ function clearSongChoices(ctx: MyContext): void {
   delete ctx.session.pendingSongSelections[String(ctx.from.id)];
 }
 
+async function groupSongKeyboard(ctx: MyContext, song: SongDoc & { _id: any }): Promise<InlineKeyboard | undefined> {
+  if (!ctx.team || !ctx.from || !env.audio.enabled) return undefined;
+  const keyboard = new InlineKeyboard();
+  if (song.audio?.processingStatus === "completed") keyboard.text("🎧 УЧИТЬ ПЕСНЮ", `ap:o:${song._id}`).row();
+  else if (song.audio?.processingStatus === "awaiting_chords") keyboard.text("🔗 ЖДЁТ HOLY CHORDS", `ap:o:${song._id}`).row();
+  else if (song.audio?.processingStatus === "queued" || song.audio?.processingStatus === "processing") keyboard.text("⏳ АУДИО ОБРАБАТЫВАЕТСЯ", `ap:o:${song._id}`).row();
+  else if (song.audio?.processingStatus === "failed") keyboard.text("⚠️ ПОВТОРИТЬ ОБРАБОТКУ", `ap:o:${song._id}`).row();
+  if (await isAdmin(ctx.from.id, ctx.team._id)) keyboard.text(song.audio?.original ? "🔄 РАЗОБРАТЬ ДРУГОЙ ФАЙЛ" : "🎧 РАЗОБРАТЬ ПЕСНЮ", `ap:upload:${song._id}`);
+  return keyboard;
+}
+
+async function sendGroupSongCard(ctx: MyContext, song: SongDoc & { _id: any }, replyToMessageId?: number): Promise<void> {
+  await sendSongCard(ctx, song, replyToMessageId, await groupSongKeyboard(ctx, song));
+}
+
 async function replyWithPendingSongChoice(ctx: MyContext, text: string): Promise<boolean> {
   if (!ctx.from || !ctx.team) return false;
   const pending = ctx.session.pendingSongSelections?.[String(ctx.from.id)];
@@ -165,7 +182,7 @@ async function replyWithPendingSongChoice(ctx: MyContext, text: string): Promise
     await ctx.reply("Эта песня уже недоступна. Попробуй выполнить поиск ещё раз.");
     return true;
   }
-  await sendSongCard(ctx, song, ctx.message!.message_id);
+  await sendGroupSongCard(ctx, song, ctx.message!.message_id);
   return true;
 }
 
@@ -187,7 +204,7 @@ async function replyWithSearchResults(
   if (results.length === 1) {
     clearSongChoices(ctx);
     const song = results[0];
-    await sendSongCard(ctx, song, ctx.message!.message_id);
+    await sendGroupSongCard(ctx, song, ctx.message!.message_id);
     return;
   }
 
@@ -365,5 +382,5 @@ songQueryComposer.callbackQuery(/^song:q:/, async (ctx) => {
   }
 
   clearSongChoices(ctx);
-  await ctx.editMessageText(formatSongCard(song), { parse_mode: "HTML" });
+  await ctx.editMessageText(formatSongCard(song), { parse_mode: "HTML", reply_markup: await groupSongKeyboard(ctx, song) });
 });

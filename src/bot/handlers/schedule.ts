@@ -13,6 +13,7 @@ import { cancelRehearsal, getAttendanceSummary, getNextRehearsal, getRehearsalsF
 import { getAdminTeams, getTeamsForUser, isAdmin } from "../../services/teamService";
 import { addLineupMember, addSetlistSong, cancelWorshipService, completeWorshipService, getLineupNames, getNextWorshipService, getServicesForDay, getSetlist, listUpcomingServices, moveSetlistSong, removeLineupMember, removeSetlistSong } from "../../services/worship-service.service";
 import { notifyTeamGroup, pinServiceAnnouncement, sendTeamGroupMessage, unpinServiceAnnouncement } from "../../services/notification.service";
+import { searchSongsPage } from "../../services/songService";
 
 export const scheduleComposer = new Composer<MyContext>();
 
@@ -168,6 +169,26 @@ async function showSetlist(ctx: MyContext, serviceId: string): Promise<void> {
   }
   keyboard.row().text("⬅️ Назад к служению", `svc:o:${serviceId}`);
   await showScheduleScreen(ctx, `🎵 <b>СЕТ-ЛИСТ</b>\n\n${lines.join("\n") || "Песни пока не добавлены."}`, keyboard);
+}
+
+async function showSongSearch(ctx: MyContext, serviceId: string, query?: string, requestedPage = 0): Promise<void> {
+  const service = await WorshipService.findById(serviceId);
+  if (!service || !(await isAdmin(ctx.from!.id, service.team))) return void (await ctx.reply("Недостаточно прав."));
+  ctx.session.songSearch = { teamId: String(service.team), serviceId, query, page: requestedPage };
+  if (!query) {
+    return void (await showScheduleScreen(ctx, "🔎 Введи часть названия песни или исполнителя:", new InlineKeyboard().text("⬅️ Назад", `svc:sl:${serviceId}`), false));
+  }
+  const result = await searchSongsPage(service.team, query, requestedPage);
+  const keyboard = new InlineKeyboard();
+  result.songs.forEach((song) => keyboard.text(`${song.title}${song.artist ? ` — ${song.artist}` : ""}`.slice(0, 60), `sl:a:${serviceId}:${song.id}`).row());
+  if (result.page > 0) keyboard.text("⬅️", `sl:p:${serviceId}:${result.page - 1}`);
+  if (result.pages > 1) keyboard.text(`${result.page + 1}/${result.pages}`, "sl:noop");
+  if (result.page < result.pages - 1) keyboard.text("➡️", `sl:p:${serviceId}:${result.page + 1}`);
+  if (result.pages > 1) keyboard.row();
+  keyboard.text(result.total ? "➕ Добавить новую песню" : `➕ Добавить “${query.slice(0, 38)}”`, `sl:new:${serviceId}`).row();
+  keyboard.text("⬅️ Назад", `svc:sl:${serviceId}`);
+  const text = result.total ? `🔎 Результаты по запросу «${escapeHtml(query)}»:` : `🔎 По запросу «${escapeHtml(query)}» ничего не найдено.`;
+  await showScheduleScreen(ctx, text, keyboard);
 }
 
 async function showToday(ctx: MyContext, teamId: string): Promise<void> {
@@ -469,10 +490,40 @@ scheduleComposer.callbackQuery(/^sl:add:/, async (ctx) => {
   await ctx.answerCallbackQuery();
   const service = await WorshipService.findById(ctx.callbackQuery.data.split(":")[2]);
   if (!service || !(await isAdmin(ctx.from.id, service.team))) return void (await ctx.reply("Недостаточно прав."));
-  const songs = await Song.find({ team: service.team }).sort({ title: 1 }).limit(40);
-  const keyboard = new InlineKeyboard();
-  songs.forEach((song) => keyboard.text(song.title.slice(0, 60), `sl:a:${service.id}:${song.id}`).row());
-  await ctx.reply(songs.length ? "Выбери песню:" : "В команде пока нет песен.", { reply_markup: keyboard });
+  await showSongSearch(ctx, service.id);
+});
+
+scheduleComposer.callbackQuery(/^sl:search:/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showSongSearch(ctx, ctx.callbackQuery.data.split(":")[2], ctx.session.songSearch?.query, ctx.session.songSearch?.page ?? 0);
+});
+
+scheduleComposer.callbackQuery(/^sl:p:/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const [, , serviceId, pageValue] = ctx.callbackQuery.data.split(":");
+  await showSongSearch(ctx, serviceId, ctx.session.songSearch?.serviceId === serviceId ? ctx.session.songSearch.query : undefined, Number(pageValue) || 0);
+});
+
+scheduleComposer.callbackQuery("sl:noop", (ctx) => ctx.answerCallbackQuery());
+
+scheduleComposer.callbackQuery(/^sl:new:/, async (ctx) => {
+  const serviceId = ctx.callbackQuery.data.split(":")[2];
+  const service = await WorshipService.findById(serviceId);
+  if (!service || !(await isAdmin(ctx.from.id, service.team))) return void (await ctx.answerCallbackQuery({ text: "Недоступно", show_alert: true }));
+  await ctx.answerCallbackQuery();
+  const query = ctx.session.songSearch?.serviceId === serviceId ? ctx.session.songSearch.query : undefined;
+  await ctx.conversation.enter("addSongFlow", String(service.team), ctx.callbackQuery.message?.message_id, query, serviceId);
+});
+
+scheduleComposer.on("message:text", async (ctx, next) => {
+  if (!ctx.session.songSearch || ctx.message.text.startsWith("/")) return next();
+  const state = ctx.session.songSearch;
+  const service = await WorshipService.findOne({ _id: state.serviceId, team: state.teamId });
+  if (!service || !(await isAdmin(ctx.from.id, state.teamId))) {
+    delete ctx.session.songSearch;
+    return void (await ctx.reply("Поиск недоступен."));
+  }
+  await showSongSearch(ctx, state.serviceId, ctx.message.text.trim(), 0);
 });
 
 scheduleComposer.callbackQuery(/^sl:(a|d|u|n|k):/, async (ctx) => {

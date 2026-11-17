@@ -26,6 +26,7 @@ export async function findSongsInTeam(teamId: Types.ObjectId | string, query: st
   if (!normalizedQuery) return [];
   const prefixMatch = await Song.find({
     team: teamId,
+    archivedAt: { $exists: false },
     $or: [
       { title: { $regex: escapeRegex(normalizedQuery), $options: "i" } },
       { artist: { $regex: escapeRegex(normalizedQuery), $options: "i" } },
@@ -35,7 +36,7 @@ export async function findSongsInTeam(teamId: Types.ObjectId | string, query: st
   if (prefixMatch.length > 0) return prefixMatch;
 
   const textMatches = await Song.find(
-    { team: teamId, $text: { $search: normalizedQuery } },
+    { team: teamId, archivedAt: { $exists: false }, $text: { $search: normalizedQuery } },
     { score: { $meta: "textScore" } }
   )
     .sort({ score: { $meta: "textScore" } })
@@ -44,7 +45,7 @@ export async function findSongsInTeam(teamId: Types.ObjectId | string, query: st
 
   // MongoDB text search не исправляет опечатки. Для небольшой командной базы
   // надёжнее ранжировать названия в приложении и вернуть близкие варианты.
-  const songs = await Song.find({ team: teamId }).limit(500);
+  const songs = await Song.find({ team: teamId, archivedAt: { $exists: false } }).limit(500);
   const queryKey = normalizeForFuzzySearch(normalizedQuery);
   return songs
     .map((song) => {
@@ -59,7 +60,33 @@ export async function findSongsInTeam(teamId: Types.ObjectId | string, query: st
 }
 
 export async function listSongsInTeam(teamId: Types.ObjectId | string) {
-  return Song.find({ team: teamId }).sort({ title: 1 });
+  return Song.find({ team: teamId, archivedAt: { $exists: false } }).sort({ title: 1 });
+}
+
+export async function searchSongsPage(teamId: Types.ObjectId | string, query: string, page = 0, pageSize = 8) {
+  const normalized = query.trim();
+  if (!normalized) return { songs: [], total: 0, page: 0, pages: 1 };
+  const filter = {
+    team: teamId,
+    archivedAt: { $exists: false },
+    $or: [
+      { title: { $regex: escapeRegex(normalized), $options: "i" } },
+      { artist: { $regex: escapeRegex(normalized), $options: "i" } },
+    ],
+  };
+  const total = await Song.countDocuments(filter);
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.max(0, Math.min(page, pages - 1));
+  const songs = await Song.find(filter).sort({ title: 1 }).skip(safePage * pageSize).limit(pageSize);
+  return { songs, total, page: safePage, pages };
+}
+
+export async function archiveSong(teamId: Types.ObjectId | string, songId: Types.ObjectId | string) {
+  return Song.findOneAndUpdate(
+    { _id: songId, team: teamId, archivedAt: { $exists: false } },
+    { $set: { archivedAt: new Date() } },
+    { returnDocument: "after" }
+  );
 }
 
 export async function updateSong(
